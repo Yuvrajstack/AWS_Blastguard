@@ -1,0 +1,95 @@
+service: blastguard-backend
+
+frameworkVersion: '>=3.0.0 <5.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'prod'}
+  memorySize: 512
+  timeout: 30
+  environment:
+    NODE_ENV: production
+    BLASTGUARD_MODE: aws
+    DYNAMODB_TABLE_NAME: !Ref BlastGuardRequestsTable
+    BEDROCK_MODEL_ID: anthropic.claude-3-5-sonnet-20240620-v1:0
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+  iam:
+    role:
+      statements:
+        # Least-privilege IAM permissions for DynamoDB
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Scan
+            - dynamodb:Query
+          Resource:
+            - !GetAtt BlastGuardRequestsTable.Arn
+            - !Sub '${BlastGuardRequestsTable.Arn}/index/*'
+        # IAM permissions for Amazon Bedrock Claude Model Invocations
+        - Effect: Allow
+          Action:
+            - bedrock:InvokeModel
+          Resource:
+            - 'arn:aws:bedrock:*::foundation-model/*'
+            - 'arn:aws:bedrock:*:*:inference-profile/*'
+
+package:
+  individually: false
+  patterns:
+    - 'dist/**'
+    - 'node_modules/**'
+    - 'package.json'
+    - '!src/**'
+    - '!tests/**'
+    - '!public/**'
+    - '!.git/**'
+
+functions:
+  api:
+    handler: dist/src/api/serverless.handler
+    description: BlastGuard Express REST API & Multi-Agent Safety Engine
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: '*'
+      - httpApi:
+          path: /
+          method: '*'
+
+resources:
+  Resources:
+    # =================================================================
+    # DynamoDB Table for Change Requests & Analysis Records
+    # =================================================================
+    BlastGuardRequestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: BlastGuardRequests
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: requestId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: requestId
+            KeyType: HASH
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        Tags:
+          - Key: Project
+            Value: BlastGuard
+          - Key: Environment
+            Value: Production
+
+  Outputs:
+    BlastGuardApiUrl:
+      Description: HTTP API Gateway endpoint URL for BlastGuard
+      Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    BlastGuardRequestsTableName:
+      Description: DynamoDB Table Name for BlastGuard
+      Value: !Ref BlastGuardRequestsTable
